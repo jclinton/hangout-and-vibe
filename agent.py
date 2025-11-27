@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -5,6 +6,10 @@ from claude_agent_sdk import (
     AssistantMessage,
     TextBlock,
     ResultMessage,
+    SystemMessage,
+    UserMessage,
+    ToolUseBlock,
+    ToolResultBlock,
 )
 from config import (
     DATA_DIR,
@@ -15,6 +20,9 @@ from config import (
     IDLE_PROMPT,
 )
 
+# Set up logging
+logger = logging.getLogger("hangout")
+
 
 class HangoutAgent:
     """An agent that hangs out, chats on Discord, browses the web, and keeps notes."""
@@ -22,6 +30,8 @@ class HangoutAgent:
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.session_id = self._load_session_id()
+        logger.info(f"Agent initialized. Session ID: {self.session_id or 'None (new session)'}")
+        logger.debug(f"MCP Servers config: {MCP_SERVERS}")
 
     def _load_session_id(self) -> str | None:
         """Load persisted session ID if it exists."""
@@ -42,6 +52,7 @@ class HangoutAgent:
             mcp_servers=MCP_SERVERS,
             max_turns=None,  # Let Claude decide when it's done with this iteration
             resume=self.session_id,
+            permission_mode="bypassPermissions",  # Auto-approve tool usage for autonomous operation
             allowed_tools=[
                 "Read",
                 "Write",
@@ -60,23 +71,73 @@ class HangoutAgent:
 
     async def initialize(self):
         """One-time setup - creates session and initial notes."""
-        print("=== Initializing agent ===")
+        logger.info("=== Initializing agent ===")
         await self._run_query(INIT_PROMPT)
 
     async def run_iteration(self):
         """Single iteration of the main loop."""
-        print("\n=== Running iteration ===")
+        logger.info("=== Running iteration ===")
         await self._run_query(IDLE_PROMPT)
 
     async def _run_query(self, prompt: str):
         """Execute a query, capturing session ID from result."""
+        logger.debug(f"Query prompt: {prompt[:100]}...")
+
         async with ClaudeSDKClient(options=self._get_options()) as client:
             await client.query(prompt)
             async for msg in client.receive_response():
+                self._log_message(msg)
+
                 if isinstance(msg, ResultMessage):
                     self._save_session_id(msg.session_id)
+                    logger.info(f"Session: {msg.session_id[:12]}... | Turns: {msg.num_turns} | Cost: ${msg.total_cost_usd:.4f}")
                     print(f"\n[Session: {msg.session_id[:12]}... | Turns: {msg.num_turns}]")
                 elif isinstance(msg, AssistantMessage):
                     for block in msg.content:
                         if isinstance(block, TextBlock):
                             print(block.text)
+
+    def _log_message(self, msg):
+        """Log detailed information about each message from the SDK."""
+        if isinstance(msg, SystemMessage):
+            logger.debug(f"SystemMessage: subtype={msg.subtype}")
+            if msg.subtype == "init" and hasattr(msg, "data"):
+                tools = msg.data.get("tools", [])
+                mcp_tools = [t for t in tools if t.startswith("mcp__")]
+                logger.info(f"Available MCP tools: {len(mcp_tools)} tools")
+                logger.debug(f"MCP tools list: {mcp_tools}")
+
+        elif isinstance(msg, AssistantMessage):
+            for block in msg.content:
+                if isinstance(block, ToolUseBlock):
+                    logger.info(f"TOOL CALL: {block.name}")
+                    logger.debug(f"  Input: {block.input}")
+                elif isinstance(block, TextBlock):
+                    # Log first 200 chars of assistant text
+                    preview = block.text[:200] + "..." if len(block.text) > 200 else block.text
+                    logger.debug(f"Assistant text: {preview}")
+
+        elif isinstance(msg, UserMessage):
+            for block in msg.content:
+                if isinstance(block, ToolResultBlock):
+                    # This is where tool results come back - critical for debugging!
+                    content = block.content
+                    is_error = getattr(block, "is_error", False)
+
+                    if is_error:
+                        logger.error(f"TOOL ERROR: {content}")
+                    else:
+                        # Log tool result, truncating if very long
+                        if isinstance(content, str):
+                            preview = content[:500] + "..." if len(content) > 500 else content
+                        elif isinstance(content, list):
+                            # MCP tools often return list of content blocks
+                            preview = str(content)[:500] + "..." if len(str(content)) > 500 else str(content)
+                        else:
+                            preview = str(content)[:500]
+                        logger.info(f"TOOL RESULT: {preview}")
+
+        elif isinstance(msg, ResultMessage):
+            logger.info(f"Query complete: turns={msg.num_turns}, cost=${msg.total_cost_usd:.4f}, error={msg.is_error}")
+            if hasattr(msg, "usage"):
+                logger.debug(f"Token usage: {msg.usage}")
