@@ -16,6 +16,7 @@ from config import (
     SESSION_FILE,
     MCP_SERVERS,
     SYSTEM_PROMPT,
+    DIAGNOSTIC_PROMPT,
     INIT_PROMPT,
     IDLE_PROMPT,
 )
@@ -68,6 +69,11 @@ class HangoutAgent:
     def is_initialized(self) -> bool:
         """Check if the agent has been initialized (has a session)."""
         return self.session_id is not None
+
+    async def run_diagnostics(self):
+        """Run Discord connectivity diagnostics."""
+        logger.info("=== Running Discord diagnostics ===")
+        await self._run_query(DIAGNOSTIC_PROMPT)
 
     async def initialize(self):
         """One-time setup - creates session and initial notes."""
