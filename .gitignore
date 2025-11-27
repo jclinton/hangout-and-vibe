@@ -1,0 +1,15 @@
+# Environment
+.env
+venv/
+__pycache__/
+*.pyc
+
+# Agent data (persisted locally)
+data/session_id
+data/notes.md
+
+# Keep the data directory structure
+!data/.gitkeep
+
+# The Discord MCP server that we use
+discord-mcp
