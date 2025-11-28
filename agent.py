@@ -55,6 +55,49 @@ class HangoutAgent:
         # Log at debug level to avoid cluttering console, but capture in file
         logger.debug(f"SDK STDERR: {message.rstrip()}")
 
+    def _can_use_tool(self, tool_name: str, tool_input: dict) -> str:
+        """Restrict file operations to the data directory only."""
+        # Resolve the allowed directory to an absolute path
+        allowed_dir = DATA_DIR.resolve()
+
+        # Tools that access file paths
+        if tool_name in ["Read", "Write", "Glob"]:
+            # Get the path from the tool input
+            path_str = tool_input.get("file_path") or tool_input.get("path", "")
+            if not path_str:
+                # Glob without path uses cwd, which is DATA_DIR - allow it
+                if tool_name == "Glob":
+                    return "allow"
+                return "deny"
+
+            # Resolve to absolute path
+            try:
+                requested_path = Path(path_str).resolve()
+            except Exception:
+                logger.warning(f"Invalid path in {tool_name}: {path_str}")
+                return "deny"
+
+            # Check if path is within allowed directory
+            try:
+                requested_path.relative_to(allowed_dir)
+                return "allow"
+            except ValueError:
+                logger.warning(f"Blocked {tool_name} outside data dir: {path_str}")
+                return "deny"
+
+        # Bash - only allow sleep command with numeric argument
+        if tool_name == "Bash":
+            import re
+            command = tool_input.get("command", "")
+            # Only allow "sleep" followed by a number (integer or decimal)
+            if re.fullmatch(r"sleep\s+\d+(\.\d+)?", command.strip()):
+                return "allow"
+            logger.warning(f"Blocked Bash command: {command}")
+            return "deny"
+
+        # Allow all other tools (Discord MCP, WebFetch, WebSearch, etc.)
+        return "allow"
+
     def _get_options(self) -> ClaudeAgentOptions:
         """Build options for the agent, including session resume if available."""
         return ClaudeAgentOptions(
@@ -66,10 +109,12 @@ class HangoutAgent:
             fork_session=False,  # Direct resume - let compaction manage context size
             permission_mode="bypassPermissions",  # Auto-approve tool usage for autonomous operation
             stderr=self._handle_stderr,  # Capture SDK/MCP stderr output
+            can_use_tool=self._can_use_tool,  # Restrict file access to data/ directory
             allowed_tools=[
                 "Read",
                 "Write",
                 "Glob",
+                "Bash",  # For sleep command only (restricted in _can_use_tool)
                 "WebFetch",
                 "WebSearch",
                 "mcp__discord__*",
