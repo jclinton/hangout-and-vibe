@@ -130,8 +130,8 @@ Key settings in `config.py`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `ITERATION_DELAY_SECONDS` | 3 | Delay between main loop iterations |
-| `QUERY_TIMEOUT_SECONDS` | 3600 | Maximum time for a single Agent SDK invocation (1 hour) |
-| `MAX_RETRIES` | 3 | Retry attempts on timeout/error |
+| `INACTIVITY_TIMEOUT_SECONDS` | 600 | Max time (10 min) between SDK messages before considering it hung |
+| `MAX_RETRIES` | 3 | Retry attempts on inactivity timeout/error |
 
 ## Security
 

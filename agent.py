@@ -21,7 +21,7 @@ from config import (
     DIAGNOSTIC_PROMPT,
     INIT_PROMPT,
     IDLE_PROMPT,
-    QUERY_TIMEOUT_SECONDS,
+    INACTIVITY_TIMEOUT_SECONDS,
     MAX_RETRIES,
 )
 
@@ -162,13 +162,10 @@ class HangoutAgent:
                     logger.info(f"Compaction complete. New session: {msg.session_id[:12]}...")
 
     async def _run_query(self, prompt: str, _compaction_attempted: bool = False):
-        """Execute a query with timeout and retry logic."""
+        """Execute a query with retry logic."""
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                result = await asyncio.wait_for(
-                    self._execute_query(prompt),
-                    timeout=QUERY_TIMEOUT_SECONDS
-                )
+                result = await self._execute_query(prompt)
                 # Check if we hit a "prompt too long" error
                 if result.get("prompt_too_long") and not _compaction_attempted:
                     logger.warning("Prompt too long - attempting compaction...")
@@ -177,12 +174,12 @@ class HangoutAgent:
                     return await self._run_query(prompt, _compaction_attempted=True)
                 return  # Success, exit retry loop
             except asyncio.TimeoutError:
-                logger.warning(f"Query timed out after {QUERY_TIMEOUT_SECONDS}s (attempt {attempt}/{MAX_RETRIES})")
+                logger.warning(f"SDK inactive for {INACTIVITY_TIMEOUT_SECONDS}s (attempt {attempt}/{MAX_RETRIES})")
                 if attempt < MAX_RETRIES:
                     logger.info("Retrying...")
                     await asyncio.sleep(2)  # Brief pause before retry
                 else:
-                    logger.error(f"Query failed after {MAX_RETRIES} attempts")
+                    logger.error(f"Query failed after {MAX_RETRIES} attempts - SDK appears hung")
                     raise
             except Exception as e:
                 logger.error(f"Query error (attempt {attempt}/{MAX_RETRIES}): {e}")
@@ -193,27 +190,43 @@ class HangoutAgent:
                     raise
 
     async def _execute_query(self, prompt: str) -> dict:
-        """Execute a single query attempt. Returns dict with status info."""
+        """Execute a single query attempt with inactivity monitoring.
+
+        Uses per-message timeout instead of global timeout. If no messages
+        arrive for INACTIVITY_TIMEOUT_SECONDS, raises asyncio.TimeoutError.
+        """
         logger.debug(f"Query prompt: {prompt[:100]}...")
         result = {"prompt_too_long": False}
 
         async with ClaudeSDKClient(options=self._get_options()) as client:
             await client.query(prompt)
-            async for msg in client.receive_response():
-                self._log_message(msg)
+            response_iter = client.receive_response()
 
-                if isinstance(msg, ResultMessage):
-                    self._save_session_id(msg.session_id)
-                    logger.info(f"Session: {msg.session_id[:12]}... | Turns: {msg.num_turns} | Cost: ${msg.total_cost_usd:.4f}")
-                    print(f"\n[Session: {msg.session_id[:12]}... | Turns: {msg.num_turns}]")
-                elif isinstance(msg, AssistantMessage):
-                    for block in msg.content:
-                        if isinstance(block, TextBlock):
-                            print(block.text)
-                            # Detect "prompt too long" error
-                            if "prompt is too long" in block.text.lower():
-                                result["prompt_too_long"] = True
-                                logger.error("Detected 'prompt is too long' error")
+            while True:
+                try:
+                    # Wait for next message with inactivity timeout
+                    msg = await asyncio.wait_for(
+                        response_iter.__anext__(),
+                        timeout=INACTIVITY_TIMEOUT_SECONDS
+                    )
+                    self._log_message(msg)
+
+                    if isinstance(msg, ResultMessage):
+                        self._save_session_id(msg.session_id)
+                        logger.info(f"Session: {msg.session_id[:12]}... | Turns: {msg.num_turns} | Cost: ${msg.total_cost_usd:.4f}")
+                        print(f"\n[Session: {msg.session_id[:12]}... | Turns: {msg.num_turns}]")
+                        break
+                    elif isinstance(msg, AssistantMessage):
+                        for block in msg.content:
+                            if isinstance(block, TextBlock):
+                                print(block.text)
+                                # Detect "prompt too long" error
+                                if "prompt is too long" in block.text.lower():
+                                    result["prompt_too_long"] = True
+                                    logger.error("Detected 'prompt is too long' error")
+                except StopAsyncIteration:
+                    break
+                # asyncio.TimeoutError propagates up to _run_query for retry handling
 
         return result
 

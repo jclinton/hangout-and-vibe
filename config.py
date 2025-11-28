@@ -12,8 +12,9 @@ NOTES_FILE = DATA_DIR / "notes.md"
 # Loop timing
 ITERATION_DELAY_SECONDS = 3
 
-# Query timeout and retry settings
-QUERY_TIMEOUT_SECONDS = 3600  # 1 hour - let the agent run until compaction
+# Inactivity timeout and retry settings
+# If no messages arrive from the SDK for this long, consider it hung
+INACTIVITY_TIMEOUT_SECONDS = 600  # 10 minutes between messages
 MAX_RETRIES = 3
 
 # MCP Server Configuration
@@ -150,5 +151,5 @@ matters to you.
 Then enter your main loop as indicated - keep running continuously. Keep
 looping. Don't end the turn - stay active.
 
-Remember: Discord messages should be chill and lowercase IRC style (but capitalize 
+Remember: Discord messages should be chill and lowercase IRC style (but capitalize
 proper nouns like names)."""
