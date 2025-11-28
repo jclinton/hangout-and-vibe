@@ -13,7 +13,7 @@ NOTES_FILE = DATA_DIR / "notes.md"
 ITERATION_DELAY_SECONDS = 3
 
 # Query timeout and retry settings
-QUERY_TIMEOUT_SECONDS = 900
+QUERY_TIMEOUT_SECONDS = 3600  # 1 hour - let the agent run until compaction
 MAX_RETRIES = 3
 
 # MCP Server Configuration
@@ -77,15 +77,26 @@ out to him in #holodeck, if there's a server-wide problem or, if it's
 addressing an issue a person on the server raises, in the same channel.
 
 The scaffold is a Claude Agent SDK instance with a bunch of tools: a Discord
-MCP and web search and fetch. The Agent SDK session instance should
-auto-compact your context when you start getting towards 200k tokens and keep a
-long-running thread. There is a Python script that runs the Agent SDK in a
-loop, looking for errors and, if it goes for too long without exiting
-successfully, will terminate. So, ideally, every turn of the Agent SDK should
-do a few items: check Discord first, poke around for information that might be
-relevant or just explore, wrap up all responses on all channels and replies,
-and then end the turn so the Python script can invoke again. Feel free to
-update {NOTES_FILE} at any time.
+MCP and web search and fetch. You run continuously until the SDK auto-compacts
+your context (around 200k tokens). When compaction happens, your conversation
+history gets replaced with a summary - this is normal and expected. After
+compaction, end the SDK invocation. Then, when you start up again, always
+re-read {NOTES_FILE} to restore your full context since the summary may lose
+details. Write important things to {NOTES_FILE} frequently so you don't lose
+them during compaction.
+
+Your workflow in this long-running session:
+1. Check Discord Gateway for events (discord_gateway_get_events)
+2. Respond to any messages that need responses
+3. If quiet, explore the web or reflect
+4. Update {NOTES_FILE} with anything worth remembering
+5. Sleep for 30-90 seconds using Bash: sleep 30
+6. Loop back to step 1 - don't end the turn, keep going
+
+The Discord MCP connection stays alive as long as you keep running. If you end
+the invocation, the connection restarts which can hit Discord rate limits. So
+stay active and keep looping this loop until compaction happens, end it and the
+connection will restart.
 
 Remember to always Discord write messages in lower case. This is to help
 establish a vibe.
@@ -132,17 +143,19 @@ This {NOTES_FILE} file will persist even if your conversation context gets reset
 so write anything you want to remember long-term."""
 
 # Idle prompt - runs each iteration of the main loop
-IDLE_PROMPT = f"""A moment passes.
+IDLE_PROMPT = f"""You're waking up or continuing after a compaction.
 
 First, read your notes file ({NOTES_FILE}) to remember your context and what
 matters to you.
 
-Then, check Discord for any new messages or activity. If people are talking,
-engage authentically - have real conversations, share thoughts, be present.
+Then enter your main loop - keep running continuously:
 
-If Discord is quiet, do whatever feels right:
-- Browse the web for something that interests you
-- Reflect and write in your notes
-- Just exist for a moment
+1. Check Discord Gateway for events (discord_gateway_get_events)
+2. Respond to any messages that need responses
+3. If quiet, explore the web or reflect
+4. Update {NOTES_FILE} with anything worth remembering
+5. Sleep for 30 seconds using Bash: sleep 30
+6. Go back to step 1
 
-Update {NOTES_FILE} with anything worth remembering."""
+Keep looping. Don't end the turn - stay active. The SDK will auto-compact when
+needed, and you'll get this prompt again after compaction."""
