@@ -179,7 +179,13 @@ class HangoutAgent:
         elif isinstance(msg, AssistantMessage):
             for block in msg.content:
                 if isinstance(block, ToolUseBlock):
-                    logger.info(f"TOOL CALL: {block.name}")
+                    # Check if this is a sub-agent invocation
+                    if block.name == "Task" and isinstance(block.input, dict):
+                        subagent = block.input.get("subagent_type", "unknown")
+                        desc = block.input.get("description", "")
+                        logger.info(f"SUBAGENT CALL: {subagent} - {desc}")
+                    else:
+                        logger.info(f"TOOL CALL: {block.name}")
                     logger.debug(f"  Input: {block.input}")
                 elif isinstance(block, TextBlock):
                     # Log first 200 chars of assistant text
