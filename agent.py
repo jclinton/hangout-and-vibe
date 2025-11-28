@@ -63,7 +63,7 @@ class HangoutAgent:
             model="claude-opus-4-5-20251101",
             max_turns=None,  # Let Claude decide when it's done with this iteration
             resume=self.session_id,
-            fork_session=True,  # Fork to get new session ID each time, preserves history
+            fork_session=False,  # Direct resume - let compaction manage context size
             permission_mode="bypassPermissions",  # Auto-approve tool usage for autonomous operation
             stderr=self._handle_stderr,  # Capture SDK/MCP stderr output
             allowed_tools=[
