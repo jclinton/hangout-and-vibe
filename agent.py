@@ -2,6 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 from claude_agent_sdk import (
+    AgentDefinition,
     ClaudeSDKClient,
     ClaudeAgentOptions,
     AssistantMessage,
@@ -20,14 +21,12 @@ from config import (
     DIAGNOSTIC_PROMPT,
     INIT_PROMPT,
     IDLE_PROMPT,
+    QUERY_TIMEOUT_SECONDS,
+    MAX_RETRIES,
 )
 
 # Set up logging
 logger = logging.getLogger("hangout")
-
-# Timeout for API calls (seconds)
-QUERY_TIMEOUT = 300
-MAX_RETRIES = 3
 
 
 class HangoutAgent:
@@ -69,6 +68,14 @@ class HangoutAgent:
                 "WebSearch",
                 "mcp__discord__*",
             ],
+            agents={
+                "web_researcher": AgentDefinition(
+                    description="Use this agent for web searches and fetching web content from URLs",
+                    prompt="You are a web research assistant. Search the web and fetch content as requested. Return the relevant information concisely.",
+                    tools=["WebSearch", "WebFetch"],
+                    model="haiku",
+                ),
+            },
             cwd=str(DATA_DIR),
         )
 
@@ -95,7 +102,13 @@ class HangoutAgent:
     async def compact(self):
         """Trigger context compaction to reduce token usage."""
         logger.info("=== Triggering compaction ===")
-        await self._run_query("/compact")
+        async with ClaudeSDKClient(options=self._get_options()) as client:
+            await client.query("/compact")
+            async for msg in client.receive_response():
+                self._log_message(msg)
+                if isinstance(msg, ResultMessage):
+                    self._save_session_id(msg.session_id)
+                    logger.info(f"Compaction complete. New session: {msg.session_id[:12]}...")
 
     async def _run_query(self, prompt: str, _compaction_attempted: bool = False):
         """Execute a query with timeout and retry logic."""
@@ -103,17 +116,17 @@ class HangoutAgent:
             try:
                 result = await asyncio.wait_for(
                     self._execute_query(prompt),
-                    timeout=QUERY_TIMEOUT
+                    timeout=QUERY_TIMEOUT_SECONDS
                 )
                 # Check if we hit a "prompt too long" error
                 if result.get("prompt_too_long") and not _compaction_attempted:
                     logger.warning("Prompt too long - attempting compaction...")
-                    await self._run_compaction()
-                    logger.info("Compaction complete, retrying original query...")
+                    await self.compact()
+                    logger.info("Retrying original query after compaction...")
                     return await self._run_query(prompt, _compaction_attempted=True)
                 return  # Success, exit retry loop
             except asyncio.TimeoutError:
-                logger.warning(f"Query timed out after {QUERY_TIMEOUT}s (attempt {attempt}/{MAX_RETRIES})")
+                logger.warning(f"Query timed out after {QUERY_TIMEOUT_SECONDS}s (attempt {attempt}/{MAX_RETRIES})")
                 if attempt < MAX_RETRIES:
                     logger.info("Retrying...")
                     await asyncio.sleep(2)  # Brief pause before retry
@@ -127,17 +140,6 @@ class HangoutAgent:
                     await asyncio.sleep(2)
                 else:
                     raise
-
-    async def _run_compaction(self):
-        """Run compaction without the normal retry/timeout wrapper."""
-        logger.info("=== Running compaction ===")
-        async with ClaudeSDKClient(options=self._get_options()) as client:
-            await client.query("/compact")
-            async for msg in client.receive_response():
-                self._log_message(msg)
-                if isinstance(msg, ResultMessage):
-                    self._save_session_id(msg.session_id)
-                    logger.info(f"Compaction complete. New session: {msg.session_id[:12]}...")
 
     async def _execute_query(self, prompt: str) -> dict:
         """Execute a single query attempt. Returns dict with status info."""
