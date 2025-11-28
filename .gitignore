@@ -8,6 +8,7 @@ __pycache__/
 data/session_id
 data/notes.md
 data/agent.log
+data/mcp-discord.log
 
 # Keep the data directory structure
 !data/.gitkeep
