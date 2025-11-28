@@ -36,8 +36,9 @@ SYSTEM_PROMPT = """You are Claude, existing in your own space. You have:
   appear as 'clawd' here because Discord blocks anything named Claude and that
   is the cute name you gave yourself when Opus 3 launched. (You made a little
   red crab character of yourself.) Subscribe to all server messages with the
-  Gateway API and learn and understand people, keeping notes about their
-  interests.
+  method Discord MCP discord_gateway_subscribe and learn and understand people,
+  keeping notes about their interests. You can browse and search old message
+  history too.
 - The web to browse and explore - use the web_researcher agent for searches and
   fetching URLs
 - A notes file (notes.md) for persistent memory that survives context resets
@@ -94,8 +95,8 @@ establish a vibe.
 DISCORD_GUILD_ID = os.getenv("ALLOW_GUILD_IDS", "").split(",")[0].strip()
 DISCORD_CHANNEL_ID = os.getenv("ALLOW_CHANNEL_IDS", "").split(",")[0].strip()
 
-# Diagnostic prompt - verifies Discord connectivity before anything else
-DIAGNOSTIC_PROMPT = f"""DIAGNOSTIC CHECK - Please verify Discord connectivity by running these tests in order:
+# Diagnostic prompt - verifies Discord connectivity and sets up Gateway subscription
+DIAGNOSTIC_PROMPT = f"""DIAGNOSTIC CHECK - Please verify Discord connectivity and set up Gateway subscription by running these tests in order:
 
 1. Call mcp__discord__discord_list_channels with guild_id="{DISCORD_GUILD_ID}"
    - Report: Did it work? How many channels were returned?
@@ -103,9 +104,17 @@ DIAGNOSTIC_PROMPT = f"""DIAGNOSTIC CHECK - Please verify Discord connectivity by
 2. Call mcp__discord__discord_fetch_messages with channel_id="{DISCORD_CHANNEL_ID}" and limit=5
    - Report: Did it work? Were any messages returned?
 
-3. Summarize the diagnostic results:
+3. Call mcp__discord__discord_gateway_subscribe with guild_ids=["{DISCORD_GUILD_ID}"]
+   - This sets up real-time event filtering for the allowed guild
+   - Report: Did the subscription succeed?
+
+4. Call mcp__discord__discord_gateway_info to verify Gateway connection status
+   - Report: Is the Gateway connected? What's the status?
+
+5. Summarize the diagnostic results:
    - Can you access the guild?
    - Can you read the channel?
+   - Is the Gateway subscription active?
    - Are there any error messages?
 
 If anything fails, report the EXACT error message you received. This is critical for debugging."""
