@@ -8,6 +8,7 @@ load_dotenv()
 DATA_DIR = Path("data")
 SESSION_FILE = DATA_DIR / "session_id"
 NOTES_FILE = DATA_DIR / "notes.md"
+MCP_LOG_FILE = DATA_DIR / "mcp-discord.log"
 
 # Loop timing
 ITERATION_DELAY_SECONDS = 3
@@ -30,7 +31,7 @@ MCP_SERVERS = {
             "DISCORD_BOT_TOKEN": os.getenv("DISCORD_BOT_TOKEN", ""),
             "ALLOW_GUILD_IDS": os.getenv("ALLOW_GUILD_IDS", ""),
             "ALLOW_CHANNEL_IDS": os.getenv("ALLOW_CHANNEL_IDS", ""),
-            "MCP_LOG_FILE": str(DATA_DIR / "mcp-discord.log"),
+            "MCP_LOG_FILE": str(MCP_LOG_FILE),
         },
     }
 }
@@ -107,7 +108,6 @@ stay active and keep looping.
 
 # Discord configuration for diagnostics
 DISCORD_GUILD_ID = os.getenv("ALLOW_GUILD_IDS", "").split(",")[0].strip()
-DISCORD_CHANNEL_ID = os.getenv("ALLOW_CHANNEL_IDS", "").split(",")[0].strip()
 
 # Diagnostic prompt - verifies Discord connectivity and sets up Gateway subscription
 DIAGNOSTIC_PROMPT = f"""DIAGNOSTIC CHECK - Please verify Discord connectivity and set up Gateway subscription by running these tests in order:

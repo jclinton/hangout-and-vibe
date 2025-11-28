@@ -9,7 +9,6 @@ import asyncio
 import logging
 import signal
 import sys
-from datetime import datetime
 
 import anyio
 
@@ -61,7 +60,7 @@ async def main():
     # Handle graceful shutdown
     shutdown_event = asyncio.Event()
 
-    def signal_handler(sig, frame):
+    def signal_handler(sig, _frame):
         logger.info(f"Received signal {sig}, shutting down...")
         print("\n\nShutting down gracefully...")
         shutdown_event.set()

@@ -175,19 +175,17 @@ class HangoutAgent:
                 return  # Success, exit retry loop
             except asyncio.TimeoutError:
                 logger.warning(f"SDK inactive for {INACTIVITY_TIMEOUT_SECONDS}s (attempt {attempt}/{MAX_RETRIES})")
-                if attempt < MAX_RETRIES:
-                    logger.info("Retrying...")
-                    await asyncio.sleep(2)  # Brief pause before retry
-                else:
+                if attempt == MAX_RETRIES:
                     logger.error(f"Query failed after {MAX_RETRIES} attempts - SDK appears hung")
-                    raise
             except Exception as e:
                 logger.error(f"Query error (attempt {attempt}/{MAX_RETRIES}): {e}")
-                if attempt < MAX_RETRIES:
-                    logger.info("Retrying...")
-                    await asyncio.sleep(2)
-                else:
-                    raise
+
+            # Common retry logic for both exception types (try block returns on success)
+            if attempt < MAX_RETRIES:
+                logger.info("Retrying...")
+                await asyncio.sleep(2)
+            else:
+                raise
 
     async def _execute_query(self, prompt: str) -> dict:
         """Execute a single query attempt with inactivity monitoring.
