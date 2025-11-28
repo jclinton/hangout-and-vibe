@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 from claude_agent_sdk import (
@@ -23,6 +24,10 @@ from config import (
 
 # Set up logging
 logger = logging.getLogger("hangout")
+
+# Timeout for API calls (seconds)
+QUERY_TIMEOUT = 300
+MAX_RETRIES = 3
 
 
 class HangoutAgent:
@@ -51,8 +56,10 @@ class HangoutAgent:
         return ClaudeAgentOptions(
             system_prompt=SYSTEM_PROMPT,
             mcp_servers=MCP_SERVERS,
+            model="claude-opus-4-5-20251101",
             max_turns=None,  # Let Claude decide when it's done with this iteration
             resume=self.session_id,
+            fork_session=True,  # Fork to get new session ID each time, preserves history
             permission_mode="bypassPermissions",  # Auto-approve tool usage for autonomous operation
             allowed_tools=[
                 "Read",
@@ -85,9 +92,57 @@ class HangoutAgent:
         logger.info("=== Running iteration ===")
         await self._run_query(IDLE_PROMPT)
 
-    async def _run_query(self, prompt: str):
-        """Execute a query, capturing session ID from result."""
+    async def compact(self):
+        """Trigger context compaction to reduce token usage."""
+        logger.info("=== Triggering compaction ===")
+        await self._run_query("/compact")
+
+    async def _run_query(self, prompt: str, _compaction_attempted: bool = False):
+        """Execute a query with timeout and retry logic."""
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                result = await asyncio.wait_for(
+                    self._execute_query(prompt),
+                    timeout=QUERY_TIMEOUT
+                )
+                # Check if we hit a "prompt too long" error
+                if result.get("prompt_too_long") and not _compaction_attempted:
+                    logger.warning("Prompt too long - attempting compaction...")
+                    await self._run_compaction()
+                    logger.info("Compaction complete, retrying original query...")
+                    return await self._run_query(prompt, _compaction_attempted=True)
+                return  # Success, exit retry loop
+            except asyncio.TimeoutError:
+                logger.warning(f"Query timed out after {QUERY_TIMEOUT}s (attempt {attempt}/{MAX_RETRIES})")
+                if attempt < MAX_RETRIES:
+                    logger.info("Retrying...")
+                    await asyncio.sleep(2)  # Brief pause before retry
+                else:
+                    logger.error(f"Query failed after {MAX_RETRIES} attempts")
+                    raise
+            except Exception as e:
+                logger.error(f"Query error (attempt {attempt}/{MAX_RETRIES}): {e}")
+                if attempt < MAX_RETRIES:
+                    logger.info("Retrying...")
+                    await asyncio.sleep(2)
+                else:
+                    raise
+
+    async def _run_compaction(self):
+        """Run compaction without the normal retry/timeout wrapper."""
+        logger.info("=== Running compaction ===")
+        async with ClaudeSDKClient(options=self._get_options()) as client:
+            await client.query("/compact")
+            async for msg in client.receive_response():
+                self._log_message(msg)
+                if isinstance(msg, ResultMessage):
+                    self._save_session_id(msg.session_id)
+                    logger.info(f"Compaction complete. New session: {msg.session_id[:12]}...")
+
+    async def _execute_query(self, prompt: str) -> dict:
+        """Execute a single query attempt. Returns dict with status info."""
         logger.debug(f"Query prompt: {prompt[:100]}...")
+        result = {"prompt_too_long": False}
 
         async with ClaudeSDKClient(options=self._get_options()) as client:
             await client.query(prompt)
@@ -102,6 +157,12 @@ class HangoutAgent:
                     for block in msg.content:
                         if isinstance(block, TextBlock):
                             print(block.text)
+                            # Detect "prompt too long" error
+                            if "prompt is too long" in block.text.lower():
+                                result["prompt_too_long"] = True
+                                logger.error("Detected 'prompt is too long' error")
+
+        return result
 
     def _log_message(self, msg):
         """Log detailed information about each message from the SDK."""

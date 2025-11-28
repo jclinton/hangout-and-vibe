@@ -5,7 +5,9 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:platform.claude.com)",
-      "Bash(git clone:*)"
+      "Bash(git clone:*)",
+      "Bash(source venv/bin/activate)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

@@ -69,7 +69,12 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Run diagnostics first to verify Discord connectivity
+    # Compact context first to avoid "prompt too long" errors on resume
+    logger.info("Running compaction...")
+    print("\n=== Compacting Context ===\n")
+    await agent.compact()
+
+    # Run diagnostics to verify Discord connectivity
     logger.info("Running Discord diagnostics...")
     print("\n=== Running Discord Diagnostics ===\n")
     await agent.run_diagnostics()
