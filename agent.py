@@ -50,6 +50,11 @@ class HangoutAgent:
         SESSION_FILE.write_text(session_id)
         self.session_id = session_id
 
+    def _handle_stderr(self, message: str):
+        """Log stderr output from the SDK/MCP servers."""
+        # Log at debug level to avoid cluttering console, but capture in file
+        logger.debug(f"SDK STDERR: {message.rstrip()}")
+
     def _get_options(self) -> ClaudeAgentOptions:
         """Build options for the agent, including session resume if available."""
         return ClaudeAgentOptions(
@@ -60,6 +65,7 @@ class HangoutAgent:
             resume=self.session_id,
             fork_session=True,  # Fork to get new session ID each time, preserves history
             permission_mode="bypassPermissions",  # Auto-approve tool usage for autonomous operation
+            stderr=self._handle_stderr,  # Capture SDK/MCP stderr output
             allowed_tools=[
                 "Read",
                 "Write",
