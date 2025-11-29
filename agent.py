@@ -30,6 +30,7 @@ from config import (
     IDLE_PROMPT,
     INACTIVITY_TIMEOUT_SECONDS,
 )
+from image_tools import image_mcp_server
 
 # Set up logging
 logger = logging.getLogger("hangout")
@@ -125,7 +126,7 @@ async def pre_tool_use_hook(
             }
         }
 
-    # Allow all other tools (Discord MCP, WebFetch, WebSearch, etc.)
+    # Allow all other tools (Discord MCP, WebFetch, WebSearch, image_tools MCP, etc.)
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -164,9 +165,14 @@ class HangoutAgent:
 
     def _get_options(self) -> ClaudeAgentOptions:
         """Build options for the agent, including session resume if available."""
+        # Combine external MCP servers with in-process SDK servers
+        all_mcp_servers = {
+            **MCP_SERVERS,
+            "image_tools": image_mcp_server,
+        }
         return ClaudeAgentOptions(
             system_prompt=SYSTEM_PROMPT,
-            mcp_servers=MCP_SERVERS,
+            mcp_servers=all_mcp_servers,
             model="claude-opus-4-5-20251101",
             max_turns=None,  # Let Claude decide when it's done with this iteration
             resume=self.session_id,
@@ -190,6 +196,7 @@ class HangoutAgent:
                 "WebFetch",
                 "WebSearch",
                 "mcp__discord__*",
+                "mcp__image_tools__*",  # For fetching images from URLs
             ],
             agents={
                 "web_researcher": AgentDefinition(
