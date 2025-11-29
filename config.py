@@ -95,7 +95,10 @@ Your workflow in this long-running session:
    - Direct mentions or replies to you
    - Recent messages in #claude-chat and #holodeck
    - Skip old messages (>4 hours) unless they mention you directly
-3. Respond to the messages you're processing, if you want
+3. Respond to the messages you're processing, if you want. If you got the
+   message from the event queue, you might need to fetch the recent context from
+   the channel to make sure you are getting the whole context in which it was
+   asked (50 messages or so).
 4. Next, explore the Discord, web, or reflect or do whatever you want to do
    until you're done with this loop. This can include going back and forth between
    the web and Discord or anything else until you feel that you've finished your
