@@ -179,6 +179,7 @@ class HangoutAgent:
             fork_session=False,  # Direct resume - let compaction manage context size
             permission_mode="default",  # Use default mode - hooks handle auto-approval
             stderr=self._handle_stderr,  # Capture SDK/MCP stderr output
+            max_buffer_size=10 * 1024 * 1024,  # 10MB buffer for large images
             # PreToolUse hook enforces permission rules (runs before permission mode check)
             hooks={
                 "PreToolUse": [

@@ -12,12 +12,13 @@ from claude_agent_sdk import tool, create_sdk_mcp_server
 
 logger = logging.getLogger("hangout")
 
-# Maximum base64 size after encoding (SDK has 1MB JSON buffer limit)
-# Leave headroom for JSON wrapper, so target ~700KB base64
-MAX_BASE64_SIZE = 700 * 1024  # 700 KB
-
 # Maximum raw image size to even attempt downloading (10MB)
 MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024
+
+# Maximum dimension (long edge) before resizing
+# Claude auto-downscales images with long edge > 1568px anyway
+# Resizing client-side saves bandwidth and improves TTFT
+MAX_DIMENSION = 1568
 
 # JPEG quality for resized images
 JPEG_QUALITY = 85
@@ -39,28 +40,35 @@ MIME_TO_PIL_FORMAT = {
 }
 
 
-def resize_image_to_fit(image_data: bytes, content_type: str, max_base64_size: int) -> tuple[bytes, str]:
-    """Resize an image to fit within the base64 size limit.
+def resize_image_if_needed(image_data: bytes, content_type: str) -> tuple[bytes, str]:
+    """Resize an image if it exceeds MAX_DIMENSION on its long edge.
+
+    Claude auto-downscales images with long edge > 1568px anyway, so resizing
+    client-side saves bandwidth and improves time-to-first-token.
 
     Args:
         image_data: Raw image bytes
         content_type: MIME type of the image
-        max_base64_size: Maximum allowed size after base64 encoding
 
     Returns:
-        Tuple of (resized image bytes, output MIME type)
+        Tuple of (possibly resized image bytes, output MIME type)
     """
-    # Calculate max raw size (base64 expands by ~33%)
-    max_raw_size = int(max_base64_size * 0.75)
-
-    # If already small enough, return as-is
-    if len(image_data) <= max_raw_size:
-        return image_data, content_type
-
-    logger.info(f"Image too large ({len(image_data)} bytes), resizing...")
-
     # Open image with PIL
     img = Image.open(io.BytesIO(image_data))
+    width, height = img.size
+    long_edge = max(width, height)
+
+    # If already within limits, return as-is
+    if long_edge <= MAX_DIMENSION:
+        logger.info(f"Image {width}x{height} within limits, no resize needed")
+        return image_data, content_type
+
+    # Calculate scale factor to fit within MAX_DIMENSION
+    scale = MAX_DIMENSION / long_edge
+    new_width = int(width * scale)
+    new_height = int(height * scale)
+
+    logger.info(f"Resizing image: {width}x{height} -> {new_width}x{new_height}")
 
     # Convert to RGB if necessary (for JPEG output)
     if img.mode in ("RGBA", "P"):
@@ -71,38 +79,19 @@ def resize_image_to_fit(image_data: bytes, content_type: str, max_base64_size: i
         output_format = MIME_TO_PIL_FORMAT.get(content_type, "JPEG")
         output_mime = content_type if content_type in SUPPORTED_TYPES else "image/jpeg"
 
-    # Binary search for the right scale factor
-    original_size = img.size
-    scale = 1.0
-    min_scale = 0.1
-    max_scale = 1.0
+    # Resize image
+    resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-    for _ in range(10):  # Max 10 iterations
-        scale = (min_scale + max_scale) / 2
-        new_size = (int(original_size[0] * scale), int(original_size[1] * scale))
-
-        # Resize image
-        resized = img.resize(new_size, Image.Resampling.LANCZOS)
-
-        # Encode to bytes
-        buffer = io.BytesIO()
-        if output_format == "JPEG":
-            resized.save(buffer, format=output_format, quality=JPEG_QUALITY, optimize=True)
-        else:
-            resized.save(buffer, format=output_format, optimize=True)
-
-        result_size = buffer.tell()
-
-        if result_size <= max_raw_size:
-            if result_size > max_raw_size * 0.8:  # Good enough, within 80-100% of target
-                break
-            min_scale = scale  # Can afford to be larger
-        else:
-            max_scale = scale  # Need to be smaller
+    # Encode to bytes
+    buffer = io.BytesIO()
+    if output_format == "JPEG":
+        resized.save(buffer, format=output_format, quality=JPEG_QUALITY, optimize=True)
+    else:
+        resized.save(buffer, format=output_format, optimize=True)
 
     buffer.seek(0)
     result_bytes = buffer.read()
-    logger.info(f"Resized image: {original_size} -> {new_size}, {len(image_data)} -> {len(result_bytes)} bytes")
+    logger.info(f"Resized: {len(image_data)} -> {len(result_bytes)} bytes")
     return result_bytes, output_mime
 
 
@@ -175,8 +164,8 @@ async def fetch_image(args: dict[str, Any]) -> dict[str, Any]:
                         "is_error": True,
                     }
 
-                # Resize if needed to fit within SDK buffer limits
-                image_data, content_type = resize_image_to_fit(image_data, content_type, MAX_BASE64_SIZE)
+                # Resize if needed (images > 1568px long edge)
+                image_data, content_type = resize_image_if_needed(image_data, content_type)
 
                 # Encode as base64
                 base64_data = base64.b64encode(image_data).decode("utf-8")
