@@ -22,7 +22,6 @@ from config import (
     INIT_PROMPT,
     IDLE_PROMPT,
     INACTIVITY_TIMEOUT_SECONDS,
-    MAX_RETRIES,
 )
 
 # Set up logging
@@ -35,6 +34,8 @@ class HangoutAgent:
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.session_id = self._load_session_id()
+        self._client: ClaudeSDKClient | None = None  # Long-lived client instance
+        self._query_in_progress = False  # Track if a query is running
         logger.info(f"Agent initialized. Session ID: {self.session_id or 'None (new session)'}")
         logger.debug(f"MCP Servers config: {MCP_SERVERS}")
 
@@ -135,6 +136,41 @@ class HangoutAgent:
         """Check if the agent has been initialized (has a session)."""
         return self.session_id is not None
 
+    async def start(self):
+        """Start the agent by initializing the long-lived client."""
+        if self._client is not None:
+            logger.warning("Agent already started")
+            return
+        logger.info("Starting agent client...")
+        self._client = ClaudeSDKClient(options=self._get_options())
+        await self._client.__aenter__()
+        logger.info("Agent client started")
+
+    async def stop(self):
+        """Stop the agent and clean up the client."""
+        if self._client is None:
+            return
+        logger.info("Stopping agent client...")
+        try:
+            if self._query_in_progress:
+                await self.interrupt()
+            await self._client.__aexit__(None, None, None)
+        except Exception as e:
+            logger.warning(f"Error during client cleanup: {e}")
+        finally:
+            self._client = None
+            logger.info("Agent client stopped")
+
+    async def interrupt(self):
+        """Interrupt any active query. Call this on shutdown signals."""
+        if self._client and self._query_in_progress:
+            logger.info("Interrupting active query...")
+            try:
+                await self._client.interrupt()
+                logger.info("Interrupt sent successfully")
+            except Exception as e:
+                logger.warning(f"Error sending interrupt: {e}")
+
     async def run_diagnostics(self):
         """Run Discord connectivity diagnostics."""
         logger.info("=== Running Discord diagnostics ===")
@@ -145,47 +181,82 @@ class HangoutAgent:
         logger.info("=== Initializing agent ===")
         await self._run_query(INIT_PROMPT)
 
-    async def run_iteration(self):
-        """Single iteration of the main loop."""
-        logger.info("=== Running iteration ===")
-        await self._run_query(IDLE_PROMPT)
+    async def _clear_session(self):
+        """Clear the session and start fresh using /clear. Used when compaction fails."""
+        logger.warning("Clearing session to start fresh via /clear")
+        if SESSION_FILE.exists():
+            SESSION_FILE.unlink()
+        self.session_id = None
+        # Use /clear to start a fresh session without restarting MCP servers
+        if self._client is not None:
+            try:
+                await self._client.query("/clear")
+                async for msg in self._client.receive_response():
+                    self._log_message(msg)
+                    if isinstance(msg, ResultMessage):
+                        self._save_session_id(msg.session_id)
+                        logger.info(f"Fresh session started: {msg.session_id[:12]}...")
+                        break
+            except Exception as e:
+                logger.error(f"Failed to start fresh session via /clear: {e}")
 
-    async def compact(self):
-        """Trigger context compaction to reduce token usage."""
+    async def compact(self) -> bool:
+        """Trigger context compaction to reduce token usage.
+
+        Returns True if compaction succeeded, False if it failed.
+        """
         logger.info("=== Triggering compaction ===")
-        async with ClaudeSDKClient(options=self._get_options()) as client:
-            await client.query("/compact")
-            async for msg in client.receive_response():
+        if self._client is None:
+            logger.error("Cannot compact: client not started")
+            return False
+        try:
+            await self._client.query("/compact")
+            async for msg in self._client.receive_response():
                 self._log_message(msg)
                 if isinstance(msg, ResultMessage):
+                    if msg.is_error:
+                        logger.error(f"Compaction returned error: {msg}")
+                        return False
                     self._save_session_id(msg.session_id)
                     logger.info(f"Compaction complete. New session: {msg.session_id[:12]}...")
+                    return True
+        except Exception as e:
+            logger.error(f"Compaction failed with exception: {e}")
+            return False
+        return False  # No ResultMessage received
 
     async def _run_query(self, prompt: str, _compaction_attempted: bool = False):
-        """Execute a query with retry logic."""
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                result = await self._execute_query(prompt)
-                # Check if we hit a "prompt too long" error
-                if result.get("prompt_too_long") and not _compaction_attempted:
-                    logger.warning("Prompt too long - attempting compaction...")
-                    await self.compact()
-                    logger.info("Retrying original query after compaction...")
-                    return await self._run_query(prompt, _compaction_attempted=True)
-                return  # Success, exit retry loop
-            except asyncio.TimeoutError:
-                logger.warning(f"SDK inactive for {INACTIVITY_TIMEOUT_SECONDS}s (attempt {attempt}/{MAX_RETRIES})")
-                if attempt == MAX_RETRIES:
-                    logger.error(f"Query failed after {MAX_RETRIES} attempts - SDK appears hung")
-            except Exception as e:
-                logger.error(f"Query error (attempt {attempt}/{MAX_RETRIES}): {e}")
-
-            # Common retry logic for both exception types (try block returns on success)
-            if attempt < MAX_RETRIES:
-                logger.info("Retrying...")
-                await asyncio.sleep(2)
+        """Execute a query, handling prompt-too-long errors with compaction."""
+        result = await self._execute_query(prompt)
+        # Check if we hit a "prompt too long" error
+        if result.get("prompt_too_long"):
+            if _compaction_attempted:
+                # Compaction didn't help - clear session and start fresh
+                logger.warning("Prompt still too long after compaction - starting fresh session")
+                await self._clear_session()
+                return await self._run_query(prompt)
+            logger.warning("Prompt too long - checking context size before compaction...")
+            await self.check_context_size()
+            compact_succeeded = await self.compact()
+            if compact_succeeded:
+                logger.info("Retrying original query after compaction...")
+                return await self._run_query(prompt, _compaction_attempted=True)
             else:
-                raise
+                logger.warning("Compaction failed - starting fresh session")
+                await self._clear_session()
+                return await self._run_query(prompt)  # Fresh session, no compaction attempted yet
+
+    async def check_context_size(self):
+        """Query the SDK for current context size using /context command."""
+        logger.info("=== Checking context size ===")
+        if self._client is None:
+            logger.error("Cannot check context: client not started")
+            return
+        await self._client.query("/context")
+        async for msg in self._client.receive_response():
+            # Log ALL message types to see what /context returns
+            logger.info(f"Context response: type={type(msg).__name__}, msg={msg}")
+            self._log_message(msg)
 
     async def _execute_query(self, prompt: str) -> dict:
         """Execute a single query attempt with inactivity monitoring.
@@ -193,12 +264,16 @@ class HangoutAgent:
         Uses per-message timeout instead of global timeout. If no messages
         arrive for INACTIVITY_TIMEOUT_SECONDS, raises asyncio.TimeoutError.
         """
-        logger.debug(f"Query prompt: {prompt[:100]}...")
+        logger.info(f"Query prompt ({len(prompt)} chars): {prompt[:100]}...")
         result = {"prompt_too_long": False}
 
-        async with ClaudeSDKClient(options=self._get_options()) as client:
-            await client.query(prompt)
-            response_iter = client.receive_response()
+        if self._client is None:
+            raise RuntimeError("Cannot execute query: client not started")
+
+        self._query_in_progress = True
+        try:
+            await self._client.query(prompt)
+            response_iter = self._client.receive_response()
 
             while True:
                 try:
@@ -224,7 +299,9 @@ class HangoutAgent:
                                     logger.error("Detected 'prompt is too long' error")
                 except StopAsyncIteration:
                     break
-                # asyncio.TimeoutError propagates up to _run_query for retry handling
+                # asyncio.TimeoutError propagates up to caller
+        finally:
+            self._query_in_progress = False
 
         return result
 
@@ -278,3 +355,8 @@ class HangoutAgent:
             logger.info(f"Query complete: turns={msg.num_turns}, cost=${msg.total_cost_usd:.4f}, error={msg.is_error}")
             if hasattr(msg, "usage"):
                 logger.debug(f"Token usage: {msg.usage}")
+
+    async def run_iteration(self):
+        """Run a single iteration of the main loop."""
+        logger.info("=== Running iteration ===")
+        await self._run_query(IDLE_PROMPT)

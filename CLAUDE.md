@@ -57,7 +57,7 @@ The agent requires environment variables (via `.env` file):
 
 - **permission_mode**: Must be set to `"bypassPermissions"` for autonomous operation, otherwise MCP tools require interactive approval
 - **fork_session**: Recommended for long-running agents to avoid context overflow on session resume
-- **Compaction**: Can be triggered manually with `/compact` command; runs automatically on startup
+- **Compaction**: Triggered by the outer loop when context grows too large
 - **Sub-agents**: Defined via `agents` parameter in `ClaudeAgentOptions`, use short model names (`"haiku"`, `"opus"`, `"sonnet"`)
 
 ## Debugging

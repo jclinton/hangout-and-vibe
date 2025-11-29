@@ -59,48 +59,58 @@ async def main():
 
     # Handle graceful shutdown
     shutdown_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
     def signal_handler(sig, _frame):
         logger.info(f"Received signal {sig}, shutting down...")
         print("\n\nShutting down gracefully...")
         shutdown_event.set()
+        # Schedule interrupt of any active query (async call from sync handler)
+        loop.call_soon_threadsafe(lambda: loop.create_task(agent.interrupt()))
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Run diagnostics to verify Discord connectivity
-    logger.info("Running Discord diagnostics...")
-    print("\n=== Running Discord Diagnostics ===\n")
-    await agent.run_diagnostics()
+    # Start the agent (initializes long-lived client and MCP servers)
+    await agent.start()
 
-    # One-time initialization if needed
-    if not agent.is_initialized:
-        await agent.initialize()
+    try:
+        # Run diagnostics to verify Discord connectivity
+        logger.info("Running Discord diagnostics...")
+        print("\n=== Running Discord Diagnostics ===\n")
+        await agent.run_diagnostics()
 
-    # Main loop
-    logger.info(f"Starting main loop (delay: {ITERATION_DELAY_SECONDS}s between iterations)")
-    print(f"\nStarting main loop (delay: {ITERATION_DELAY_SECONDS}s between iterations)")
-    print("Press Ctrl+C to stop\n")
+        # One-time initialization if needed
+        if not agent.is_initialized:
+            await agent.initialize()
 
-    iteration_count = 0
-    while not shutdown_event.is_set():
-        iteration_count += 1
-        logger.info(f"--- Iteration {iteration_count} ---")
-        try:
-            await agent.run_iteration()
-        except Exception as e:
-            logger.exception(f"Error in iteration {iteration_count}: {e}")
-            print(f"\n[Error in iteration: {e}]")
-            # Continue running despite errors
+        # Main loop
+        logger.info(f"Starting main loop (delay: {ITERATION_DELAY_SECONDS}s between iterations)")
+        print(f"\nStarting main loop (delay: {ITERATION_DELAY_SECONDS}s between iterations)")
+        print("Press Ctrl+C to stop\n")
 
-        # Wait before next iteration, but allow early exit on shutdown
-        try:
-            await asyncio.wait_for(
-                shutdown_event.wait(),
-                timeout=ITERATION_DELAY_SECONDS,
-            )
-        except asyncio.TimeoutError:
-            pass  # Normal case - timeout means continue to next iteration
+        iteration_count = 0
+        while not shutdown_event.is_set():
+            iteration_count += 1
+            logger.info(f"--- Iteration {iteration_count} ---")
+            try:
+                await agent.run_iteration()
+            except Exception as e:
+                logger.exception(f"Error in iteration {iteration_count}: {e}")
+                print(f"\n[Error in iteration: {e}]")
+                # Continue running despite errors
+
+            # Wait before next iteration, but allow early exit on shutdown
+            try:
+                await asyncio.wait_for(
+                    shutdown_event.wait(),
+                    timeout=ITERATION_DELAY_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                pass  # Normal case - timeout means continue to next iteration
+    finally:
+        # Always clean up the client (stops MCP servers)
+        await agent.stop()
 
     logger.info("Agent stopped.")
     print("Agent stopped.")

@@ -131,7 +131,6 @@ Key settings in `config.py`:
 |---------|---------|-------------|
 | `ITERATION_DELAY_SECONDS` | 3 | Delay between main loop iterations |
 | `INACTIVITY_TIMEOUT_SECONDS` | 600 | Max time (10 min) between SDK messages before considering it hung |
-| `MAX_RETRIES` | 3 | Retry attempts on inactivity timeout/error |
 
 ## Security
 
@@ -145,8 +144,8 @@ The agent has restricted permissions:
 The agent uses the Claude Agent SDK to create a long-running session. Key design decisions:
 
 - **Long-running sessions**: Instead of short iterations, the agent runs continuously in a single SDK session
-- **Manual compaction**: The agent runs `/compact` after research cycles to manage context size without ending the session
-- **Persistent memory**: Notes are stored in `data/notes.md` and survive context resets
+- **Automatic context management**: Compaction is triggered by the outer loop when context grows too large
+- **Persistent memory**: Notes are stored in `data/notes.md` and survive compaction
 - **Cost optimization**: Web searches are delegated to a Haiku-based sub-agent instead of using Opus directly
 
 ## License

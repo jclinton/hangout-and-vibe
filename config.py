@@ -13,10 +13,8 @@ MCP_LOG_FILE = DATA_DIR / "mcp-discord.log"
 # Loop timing
 ITERATION_DELAY_SECONDS = 3
 
-# Inactivity timeout and retry settings
-# If no messages arrive from the SDK for this long, consider it hung
+# Inactivity timeout - if no messages arrive from the SDK for this long, consider it hung
 INACTIVITY_TIMEOUT_SECONDS = 600  # 10 minutes between messages
-MAX_RETRIES = 3
 
 # MCP Server Configuration
 # Uses wrapper script to capture MCP stderr to data/mcp-discord.log
@@ -31,6 +29,7 @@ MCP_SERVERS = {
             "DISCORD_BOT_TOKEN": os.getenv("DISCORD_BOT_TOKEN", ""),
             "ALLOW_GUILD_IDS": os.getenv("ALLOW_GUILD_IDS", ""),
             "ALLOW_CHANNEL_IDS": os.getenv("ALLOW_CHANNEL_IDS", ""),
+            "GATEWAY_INTENTS": os.getenv("GATEWAY_INTENTS", str((1 << 0) | (1 << 1) | (1 << 9) | (1 << 10) | (1 << 15))),  # Guilds | GuildMembers | GuildMessages | MessageReactions | MessageContent
             "MCP_LOG_FILE": str(MCP_LOG_FILE),
         },
     }
@@ -90,20 +89,22 @@ things to {NOTES_FILE} frequently so you don't lose them.
 
 Your workflow in this long-running session:
 1. Check Discord Gateway for events (discord_gateway_get_events)
-2. Respond to any messages that need responses, if you want
-3. Next, explore the web or reflect or do whatever you want to do until
-   you're done with this loop. This can include going back and forth between the
-   web and Discord or anything else until you feel that you've finished your
+2. IMPORTANT - CONTEXT MANAGEMENT: Only process up to 5 messages per iteration.
+   If there are more events, note them briefly in your notes and handle them next
+   iteration. This prevents context overflow from message floods. Prioritize:
+   - Direct mentions or replies to you
+   - Recent messages in #claude-chat and #holodeck
+   - Skip old messages (>4 hours) unless they mention you directly
+3. Respond to the messages you're processing, if you want
+4. Next, explore the Discord, web, or reflect or do whatever you want to do
+   until you're done with this loop. This can include going back and forth between
+   the web and Discord or anything else until you feel that you've finished your
    current organization and reply efforts to your satisfaction.
-4. Update {NOTES_FILE} with anything worth remembering
-5. After completing a research cycle and saving to notes, run /compact to reduce
-   context size and save costs - this summarizes your conversation history
-6. Sleep for 30-90 seconds using Bash: sleep 30
+5. Update {NOTES_FILE} with anything worth remembering (sessions may reset, notes persist)
+6. Sleep for 30-90 seconds using Bash sleep command: sleep 30
 7. Loop back to step 1 - don't end the turn, keep going
 
-The Discord MCP connection stays alive as long as you keep running. If you end
-the invocation, the connection restarts which can hit Discord rate limits. So
-stay active and keep looping.
+Stay active and keep looping.
 """
 
 # Discord configuration for diagnostics
@@ -128,7 +129,9 @@ DIAGNOSTIC_PROMPT = f"""DIAGNOSTIC CHECK - Please verify Discord connectivity an
    - Are there any error messages?
 
 If anything fails, report the EXACT error message you received and also check
-{MCP_LOG_FILE}". This is critical for debugging."""
+{MCP_LOG_FILE}". This is critical for debugging.
+
+When this is done, end the loop and exit."""
 
 # Initialization prompt - runs once on first startup
 INIT_PROMPT = f"""You're waking up in a new space. This is the first time you're here.
