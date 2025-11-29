@@ -252,24 +252,30 @@ class HangoutAgent:
         logger.info("=== Initializing agent ===")
         await self._run_query(INIT_PROMPT)
 
-    async def _clear_session(self):
-        """Clear the session and start fresh using /clear. Used when compaction fails."""
-        logger.warning("Clearing session to start fresh via /clear")
+    async def _restart_client(self):
+        """Restart the client to get a fresh session when compaction fails.
+
+        This recreates the ClaudeSDKClient which will also restart MCP servers.
+        Only used as a last resort when context is full and compaction doesn't help.
+        """
+        logger.warning("Restarting client for fresh session (MCP servers will restart)")
         if SESSION_FILE.exists():
             SESSION_FILE.unlink()
         self.session_id = None
-        # Use /clear to start a fresh session without restarting MCP servers
+
+        # Stop the old client
         if self._client is not None:
             try:
-                await self._client.query("/clear")
-                async for msg in self._client.receive_response():
-                    self._log_message(msg)
-                    if isinstance(msg, ResultMessage):
-                        self._save_session_id(msg.session_id)
-                        logger.info(f"Fresh session started: {msg.session_id[:12]}...")
-                        break
+                await self._client.__aexit__(None, None, None)
             except Exception as e:
-                logger.error(f"Failed to start fresh session via /clear: {e}")
+                logger.warning(f"Error stopping old client: {e}")
+            self._client = None
+
+        # Create fresh client - _get_options() will have resume=None now
+        logger.info("Creating fresh client instance...")
+        self._client = ClaudeSDKClient(options=self._get_options())
+        await self._client.__aenter__()
+        logger.info("Fresh client ready")
 
     async def compact(self) -> bool:
         """Trigger context compaction to reduce token usage.
@@ -296,26 +302,26 @@ class HangoutAgent:
             return False
         return False  # No ResultMessage received
 
-    async def _run_query(self, prompt: str, _compaction_attempted: bool = False):
-        """Execute a query, handling prompt-too-long errors with compaction."""
+    async def _run_query(self, prompt: str, _retried: bool = False):
+        """Execute a query, handling prompt-too-long errors with compaction or restart."""
         result = await self._execute_query(prompt)
         # Check if we hit a "prompt too long" error
         if result.get("prompt_too_long"):
-            if _compaction_attempted:
-                # Compaction didn't help - clear session and start fresh
-                logger.warning("Prompt still too long after compaction - starting fresh session")
-                await self._clear_session()
-                return await self._run_query(prompt)
-            logger.warning("Prompt too long - checking context size before compaction...")
+            if _retried:
+                # Already retried once - give up to avoid infinite loop
+                logger.error("Prompt still too long after restart - giving up")
+                return
+            logger.warning("Prompt too long - attempting compaction...")
             await self.check_context_size()
             compact_succeeded = await self.compact()
             if compact_succeeded:
                 logger.info("Retrying original query after compaction...")
-                return await self._run_query(prompt, _compaction_attempted=True)
+                return await self._run_query(prompt, _retried=True)
             else:
-                logger.warning("Compaction failed - starting fresh session")
-                await self._clear_session()
-                return await self._run_query(prompt)  # Fresh session, no compaction attempted yet
+                # Compaction failed - restart client as last resort
+                logger.warning("Compaction failed - restarting client")
+                await self._restart_client()
+                return await self._run_query(prompt, _retried=True)
 
     async def check_context_size(self):
         """Query the SDK for current context size using /context command."""

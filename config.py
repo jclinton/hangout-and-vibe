@@ -120,6 +120,8 @@ DIAGNOSTIC_PROMPT = f"""DIAGNOSTIC CHECK - Please verify Discord connectivity an
    - Report: Did it work? How many channels were returned?
 
 2. Call mcp__discord__discord_gateway_subscribe with guild_ids=["{DISCORD_GUILD_ID}"]
+   - DON'T call discord_gateway_get_events yet because that'll cause pending
+     messages to get lost.
    - This sets up real-time event filtering for the allowed guild
    - Report: Did the subscription succeed?
 
