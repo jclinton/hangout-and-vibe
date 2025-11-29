@@ -311,37 +311,28 @@ class HangoutAgent:
         return False  # No ResultMessage received
 
     async def _run_query(self, prompt: str, _retried: bool = False):
-        """Execute a query, handling prompt-too-long errors with compaction or restart."""
+        """Execute a query, handling prompt-too-long errors with restart.
+
+        Runs compaction after every successful query to keep context manageable.
+        If prompt-too-long error occurs, immediately restarts with fresh session
+        since the context is already at capacity and can't accept /compact command.
+        """
         result = await self._execute_query(prompt)
+
         # Check if we hit a "prompt too long" error
         if result.get("prompt_too_long"):
             if _retried:
                 # Already retried once - give up to avoid infinite loop
                 logger.error("Prompt still too long after restart - giving up")
                 return
-            logger.warning("Prompt too long - attempting compaction...")
-            await self.check_context_size()
-            compact_succeeded = await self.compact()
-            if compact_succeeded:
-                logger.info("Retrying original query after compaction...")
-                return await self._run_query(prompt, _retried=True)
-            else:
-                # Compaction failed - restart client as last resort
-                logger.warning("Compaction failed - restarting client")
-                await self._restart_client()
-                return await self._run_query(prompt, _retried=True)
+            # Context is full - can't even send /compact, so restart immediately
+            logger.warning("Prompt too long - restarting client with fresh session")
+            await self._restart_client()
+            return await self._run_query(prompt, _retried=True)
 
-    async def check_context_size(self):
-        """Query the SDK for current context size using /context command."""
-        logger.info("=== Checking context size ===")
-        if self._client is None:
-            logger.error("Cannot check context: client not started")
-            return
-        await self._client.query("/context")
-        async for msg in self._client.receive_response():
-            # Log ALL message types to see what /context returns
-            logger.info(f"Context response: type={type(msg).__name__}, msg={msg}")
-            self._log_message(msg)
+        # Proactively compact after every successful query to prevent overflow
+        logger.info("Running post-query compaction...")
+        await self.compact()
 
     async def _execute_query(self, prompt: str) -> dict:
         """Execute a single query attempt with inactivity monitoring.
