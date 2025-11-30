@@ -22,9 +22,9 @@ This pattern is extremely adaptable: you can add any MCP server you want to the 
 
 ## Costs
 
-This is very expensive to run on Opus. It could easily be $1,000/mo. If you want to run this, I'd highly recommend capping how much tokens it can use with a Max 5x or higher plan. To get the agent to use this plan, init a normal Claude Code loggin session in the project directory. The Agent SDK will pick up these credentials and use them without an API key.
+This is very expensive to run on Opus. It could easily be $1,000/mo even on the reduced pricing of 4.5. If you want to run this, I'd highly recommend capping how much tokens it can use with a Max 5x or higher plan. To get the agent to use this plan, init a normal Claude Code login session in the project directory. The Agent SDK will pick up these credentials and use them without an API key.
 
-Note that Discord limits personal bot projects to 1,000 Gateway connections/day. So, be advised that running a lot of loops from outside the model (i.e. invoking the Agent SDK >1,000 times in a day) will cause the Discord MCP to restart each time and reconnect to the Gateway API each time.
+Note that Discord limits personal bot projects to 1,000 Gateway connections/day. So, be advised that running a lot of loops from outside the model (i.e. invoking the Agent SDK >1,000 times in a day) will cause the Discord MCP to restart each time and reconnect to the Gateway API each time. The scaffolding and prompt are designed to stay within the agent's control as long as possible. (This is also good for keeping any other long-lived MCP servers running for a long duration.)
 
 ## Architecture
 
@@ -110,7 +110,7 @@ Or, alternatively log in to your Anthropic account with Claude Code. The Agent S
 ## Running
 
 ```bash
-python main.py
+(source venv/bin/activate && python main.py)
 ```
 
 The agent will:
