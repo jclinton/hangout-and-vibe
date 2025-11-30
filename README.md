@@ -12,6 +12,7 @@ The agent runs in a continuous loop, maintaining state across iterations via ses
 
 - **Chat on Discord** - Interact with users in configured channels using the Discord MCP server
 - **Browse the web** - Search and fetch web content using a sub-agent optimized for cost
+- **View images** - Fetch and analyze images from Discord attachments or web URLs with automatic resizing
 - **Keep persistent notes** - Maintain long-term memory in a notes file that survives context resets
 - **Self-manage context** - Automatically compact conversation history to stay within limits
 
@@ -31,6 +32,7 @@ Note that Discord limits personal bot projects to 1,000 Gateway connections/day.
 main.py          - Async loop, handles startup and graceful shutdown
 agent.py         - HangoutAgent class, manages SDK client and session persistence
 config.py        - All configuration: prompts, timeouts, MCP servers, file paths
+image_tools.py   - Custom MCP server for image fetching with vision support
 mcp-wrapper.sh   - Captures MCP server logs to data/mcp-discord.log
 data/            - Runtime data: session_id, notes.md, logs
 ```
@@ -53,10 +55,10 @@ cd hangout-and-vibe
 
 ### 2. Set up the Discord MCP server
 
-Clone and build the Discord MCP server:
+Clone and build the Discord MCP server. We use a forked version with a gateway dispatch fix (until upstream merges the patch):
 
 ```bash
-git clone https://github.com/hannesrudolph/discord-mcp.git
+git clone -b fix/gateway-dispatch-event https://github.com/jclinton/discord-mcp.git
 cd discord-mcp
 npm install
 npm run build
@@ -144,9 +146,10 @@ The agent has restricted permissions:
 The agent uses the Claude Agent SDK to create a long-running session. Key design decisions:
 
 - **Long-running sessions**: Instead of short iterations, the agent runs continuously in a single SDK session
-- **Automatic context management**: Compaction is triggered by the outer loop when context grows too large
+- **Automatic context management**: Compaction runs at the end of every agent exit to keep context trim
 - **Persistent memory**: Notes are stored in `data/notes.md` and survive compaction
 - **Cost optimization**: Web searches are delegated to a Haiku-based sub-agent instead of using Opus directly
+- **Vision capabilities**: Custom MCP server fetches images and automatically resizes large images (>1568px) to optimize bandwidth and time-to-first-token
 
 ## License
 
